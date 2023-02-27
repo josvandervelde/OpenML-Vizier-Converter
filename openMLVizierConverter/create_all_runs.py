@@ -53,20 +53,5 @@ def create_all():
     logging.info("Done")
 
 
-def jos():
-    import pandas as pd
-    from pathlib import Path
-
-    import converter
-
-    DIR_ROOT = Path(__file__).resolve().parents[1]
-    df_ids = pd.read_csv(DIR_ROOT / "data" / "runids.csv")
-    ids = set(df_ids['id'].unique())
-
-    for id_ in ids:
-        study = converter.create_study_from_openml(id_)
-        print(study)
-
-
 if __name__ == '__main__':
     create_all()

@@ -97,7 +97,7 @@ def _raise_error_if_inconsistent(study: Study):
         for parameter_name, feasible_values in feasible_values_dict.items():
             trial_value = trial.parameters[parameter_name].value
             if isinstance(feasible_values, tuple):
-                # double parameter has not Feasible values, but has bounds
+                # double parameter has no Feasible values set, but has bounds
                 if trial_value < feasible_values[0] or trial_value > feasible_values[1]:
                     raise ValueError(f"For {parameter_name=}, the {trial_value=} is not within "
                                      f"the bounds {feasible_values[0]}, {feasible_values[1]}")

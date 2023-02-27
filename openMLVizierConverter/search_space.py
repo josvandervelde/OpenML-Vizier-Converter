@@ -17,14 +17,14 @@ from vizier import pyvizier as vz
 def determine_search_space(run: OpenMLRun, run_trace: OpenMLRunTrace) -> tuple[vz.SearchSpace, dict]:
     """Find the Vizier Search Space given the OpenML run"""
     if run.setup_string is not None and run.setup_string.startswith("weka"):
-        return determine_search_space_weka(run)
+        return _determine_search_space_weka(run)
     else:
-        return determine_search_space_sklearn(run, run_trace), {}
+        return _determine_search_space_sklearn(run, run_trace), {}
 
 
-def determine_search_space_sklearn(run: OpenMLRun, run_trace: OpenMLRunTrace) -> vz.SearchSpace:
+def _determine_search_space_sklearn(run: OpenMLRun, run_trace: OpenMLRunTrace) -> vz.SearchSpace:
     """Create Vizier Search Space given an OpenML Sklearn run"""
-    param_settings = sklearn_possible_param_values(run, run_trace)
+    param_settings = _sklearn_possible_param_values(run, run_trace)
 
     search_space = vz.SearchSpace()
     root = search_space.root
@@ -37,7 +37,7 @@ def determine_search_space_sklearn(run: OpenMLRun, run_trace: OpenMLRunTrace) ->
         type_, = types
 
         if type_ in (int, np.int64, np.int32, float, np.float64, np.float32):
-            add_number_param(root, param_possible_values, param_name)
+            _add_number_param(root, param_possible_values, param_name)
         elif type_ == bool:
             root.add_bool_param(name=param_name)
         elif type_ == str:
@@ -47,7 +47,7 @@ def determine_search_space_sklearn(run: OpenMLRun, run_trace: OpenMLRunTrace) ->
     return search_space
 
 
-def sklearn_possible_param_values(run, run_trace) -> dict[str, set]:
+def _sklearn_possible_param_values(run, run_trace) -> dict[str, set]:
     """Return a dictionary containing for each parameter name a set of possible values"""
     if run.parameter_settings is None or len(run.parameter_settings) == 0:
         raise ValueError("Parameter settings not found")
@@ -80,7 +80,7 @@ def sklearn_possible_param_values(run, run_trace) -> dict[str, set]:
     return param_settings
 
 
-def determine_scale_type(possible_values: set) -> vz.ScaleType:
+def _determine_scale_type(possible_values: set) -> vz.ScaleType:
     """
     Check if the possible values best fit a linear or a logarithmic scale.
     """
@@ -97,13 +97,13 @@ def determine_scale_type(possible_values: set) -> vz.ScaleType:
     return vz.ScaleType.REVERSE_LOG
 
 
-def determine_search_space_weka(run: OpenMLRun) -> tuple[vz.SearchSpace, dict]:
+def _determine_search_space_weka(run: OpenMLRun) -> tuple[vz.SearchSpace, dict]:
     """Given an OpenML WEKA run, return the Vizier Search Space."""
     weka_string, = [ps['oml:value'] for ps in run.parameter_settings if ps['oml:name'] == 'search']
-    return search_space_from_weka_string(weka_string)
+    return _search_space_from_weka_string(weka_string)
 
 
-def search_space_from_weka_string(weka_string) -> tuple[vz.SearchSpace, dict]:
+def _search_space_from_weka_string(weka_string) -> tuple[vz.SearchSpace, dict]:
     """
     Given a WEKA description, return the Vizier Search Space
 
@@ -150,13 +150,13 @@ def search_space_from_weka_string(weka_string) -> tuple[vz.SearchSpace, dict]:
     parameter_convertors = {}
     for param in property_descriptions:
         if "-list" in param:
-            options = [try_convert_string_to_float(v) for v in param['-list'].split()]
+            options = [_try_convert_string_to_float(v) for v in param['-list'].split()]
 
             if all(isinstance(v, str) for v in options):
                 root.add_categorical_param(name=param['-property'],
                                            feasible_values=options)
             else:
-                add_number_param(root, options, param['-property'])
+                _add_number_param(root, options, param['-property'])
         else:
             min_ = float(param['-min'])
             max_ = float(param['-max'])
@@ -166,7 +166,7 @@ def search_space_from_weka_string(weka_string) -> tuple[vz.SearchSpace, dict]:
                     scale_type = vz.ScaleType.LOG
                     base_ = float(param['-base'])
                     options = {base_ ** v for v in (min_, max_)}
-                    parameter_convertors[param['-property']] = exp_func(base_)
+                    parameter_convertors[param['-property']] = _exp_func(base_)
                 elif expression == "I":
                     scale_type = vz.ScaleType.LINEAR
                     options = {min_, max_}
@@ -175,17 +175,17 @@ def search_space_from_weka_string(weka_string) -> tuple[vz.SearchSpace, dict]:
             else:
                 scale_type = vz.ScaleType.LINEAR
                 options = {min_, max_}
-            add_number_param(root, options, param['-property'], scale_type=scale_type)
+            _add_number_param(root, options, param['-property'], scale_type=scale_type)
     return search_space, parameter_convertors
 
 
-def exp_func(base):
+def _exp_func(base):
     return lambda v: base ** v
 
 
-def add_number_param(root, options, param_name, scale_type=None):
+def _add_number_param(root, options, param_name, scale_type=None):
     if scale_type is None:
-        scale_type = determine_scale_type(options)
+        scale_type = _determine_scale_type(options)
     # TODO: should we use root.add_discrete_param instead? Because we know the possible values?
     kwargs = {
         "name": param_name,
@@ -198,7 +198,7 @@ def add_number_param(root, options, param_name, scale_type=None):
     add_param(**kwargs)
 
 
-def try_convert_string_to_float(string: str):
+def _try_convert_string_to_float(string: str):
     if string.startswith("\"") and string.endswith("\""):
         string = string[1:-1]
     try:

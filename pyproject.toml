@@ -1,0 +1,29 @@
+[project]
+name = "OpenMLVizierConverter"
+description = "Convert OpenML runs to Google Vizier Studies"
+version = "0.1"
+authors = [
+    { name = "Jos van der Velde", email = "j.d.v.d.velde@tue.nl"},
+]
+dependencies = [
+    "google-vizier",
+    "numpy",
+    "openml",
+    "pandas",
+    "retry",
+    "scipy",
+    "tqdm"
+]
+readme = "README.md"
+
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit"
+]
+
+[tool.black]
+line-length = 100
+
+[tool.setuptools]
+py-modules = ["openMLVizierConverter"]

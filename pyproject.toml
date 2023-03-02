@@ -19,7 +19,8 @@ readme = "README.md"
 
 [project.optional-dependencies]
 dev = [
-    "pre-commit"
+    "pre-commit",
+    "pytest"
 ]
 
 [tool.black]

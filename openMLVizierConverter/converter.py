@@ -43,13 +43,15 @@ def create_study_from_openml(run_id: int = 10437679) -> Study:
     metadata = vz.Metadata(
         {
             "name": f"Dataset {run.dataset_id}; Task {run.task_id} (type {run.task_type}); flow: "
-            f"{run.flow_id}. Run {run.id}",
+            f"{run.flow_id} {run.flow_name}. Run {run.id}",
             "dataset_id": run.dataset_id,
             "task_id": run.task_id,
             "task_type": run.task_type,
             "flow_id": run.flow_id,
             "flow": run.flow_name,
             "run_id": run.id,
+            "uploader_id": run.uploader,
+            "uploader": run.uploader_name,
         }
     )
 

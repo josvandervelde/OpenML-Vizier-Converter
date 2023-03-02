@@ -4,6 +4,8 @@ Find the Vizier Search Space given an OpenML run.
 
 
 import json
+import math
+
 import numpy as np
 import shlex
 
@@ -38,7 +40,7 @@ def _determine_search_space_sklearn(run: OpenMLRun, run_trace: OpenMLRunTrace) -
             raise ValueError(f"Multiple types in a single parameter: {types}")
         (type_,) = types
 
-        if type_ in (int, np.int64, np.int32, float, np.float64, np.float32):
+        if type_ in (int, float):
             _add_number_param(root, param_possible_values, param_name)
         elif type_ == bool:
             root.add_bool_param(name=param_name)
@@ -84,15 +86,84 @@ def _sklearn_possible_param_values(run, run_trace) -> dict[str, set]:
             # Fallback for when parameters could not be determined, or the parameters were for
             # one reason or the other not part of the parameter description.
             # Solution: check what parameters were actually tried in the run.
-            param_settings[param_name] = set(df_actual[param_name].unique())
+            actual_values = set(df_actual[param_name].unique())
+            if df_actual[param_name].dtype in (np.int32, np.int64):
+                actual_values = {int(v) for v in actual_values}
+            elif df_actual[param_name].dtype in (np.float32, np.float64):
+                actual_values = {float(v) for v in actual_values}
+            param_settings[param_name] = actual_values
 
     return param_settings
 
 
-def _determine_scale_type(possible_values: set) -> vz.ScaleType:
+def _heuristically_determine_scale_type(possible_values: set) -> vz.ScaleType | None:
     """
-    Check if the possible values best fit a linear or a logarithmic scale.
+    Heuristics for determining the parameter type + scale type. Returns None if parameter type
+    should be discrete, returns scale type if parameter type should be int/float.
+
+    See the unittest for some examples
     """
+    if not isinstance(possible_values, set):
+        possible_values = set(possible_values)
+        possible_values = set(possible_values)
+    if len(possible_values) < 3:
+        return None  # Discrete parameter
+
+    sorted_values = sorted(possible_values)
+    values_series = pd.Series(sorted_values)
+
+    # check if linear by checking if the common difference between successive values is the same
+    # e.g. (1, 3, 5, 7) ==> difference is always 2
+    # or if there are only two successive differences, one twice the size of the other
+    # e.g. (1, 3, 4, 5, 7) ==> difference is always 1 or 2
+    values_normalized = values_series - min(values_series)
+    diffs = values_normalized[1:] - values_normalized.shift()[1:]
+    diffs = diffs.apply(_round_with_precision)
+    diffs_unique = diffs.unique()
+    if len(diffs_unique) == 1:
+        return vz.ScaleType.LINEAR
+    if (
+        len(diffs_unique) == 2
+        and len(possible_values) > 3
+        and math.isclose(max(diffs_unique) / min(diffs_unique), 2)
+    ):
+        return vz.ScaleType.LINEAR
+
+    if len(possible_values) == 3:
+        # check if (reverse)log by checking if successive values are all multiplied by the same
+        # value
+        # e.g. (2, 4, 8) ==> difference is always x2
+        diffs_multiplication = (values_series.iloc[1:] / values_series.shift().iloc[1:]).unique()
+    else:
+        # check if (reverse)log by checking if successive differences are all multiplied by the same
+        # value
+        # e.g. (2, 4, 8, 16) ==> differences are (2, 4, 8) ==> difference is x2
+        # e.g. (12, 14, 18, 26) ==> differences are (2, 4, 8) ==> difference is x2
+        diffs = values_series.shift()[1:] - values_series[1:]
+        diffs_multiplication = (diffs.iloc[1:] / diffs.shift().iloc[1:]).unique()
+    if math.isclose(max(diffs_multiplication) / min(diffs_multiplication), 1):
+        multiplier = np.mean(diffs_multiplication)
+        if math.isclose(multiplier, 1):
+            raise ValueError("Linear parameter should have been detected already")
+        elif multiplier > 1:
+            return vz.ScaleType.LOG
+        else:
+            return vz.ScaleType.REVERSE_LOG
+    return None
+
+
+def _round_with_precision(value, precision=5):
+    rounded_log10 = int(np.log10(abs(value)))
+    return round(value * 10**-rounded_log10, precision) * 10**rounded_log10
+
+
+def _fit_scale_type(possible_values: set) -> vz.ScaleType | None:
+    """
+    Check if the values better fit a linear or a (reversed) logspace. Even if the fit is terrible,
+    it will return the best fit.
+    """
+    if len(possible_values) <= 2:
+        return None
     values_sorted = sorted(possible_values)
     r_lin = stats.linregress(values_sorted, range(0, len(values_sorted))).rvalue
     r_log = stats.linregress(
@@ -101,9 +172,10 @@ def _determine_scale_type(possible_values: set) -> vz.ScaleType:
     r_reverse_log = stats.linregress(
         values_sorted, sorted(-np.logspace(1, len(values_sorted), num=len(values_sorted)))
     ).rvalue
-    if r_lin > r_log and r_lin > r_reverse_log:
+
+    if r_lin >= r_log and r_lin >= r_reverse_log:
         return vz.ScaleType.LINEAR
-    if r_log > r_reverse_log:
+    if r_log >= r_reverse_log:
         return vz.ScaleType.LOG
     return vz.ScaleType.REVERSE_LOG
 
@@ -172,22 +244,20 @@ def _search_space_from_weka_string(weka_string) -> tuple[vz.SearchSpace, dict]:
         else:
             min_ = float(param["-min"])
             max_ = float(param["-max"])
+            step = float(param["-step"]) if "-step" in param else 1
             if "-expression" in param:
                 expression = param["-expression"]
                 if expression == "pow(BASE,I)":
-                    scale_type = vz.ScaleType.LOG
                     base_ = float(param["-base"])
-                    options = {base_**v for v in (min_, max_)}
+                    options = {base_**v for v in np.arange(min_, max_ + step, step)}
                     parameter_convertors[param["-property"]] = _exp_func(base_)
                 elif expression == "I":
-                    scale_type = vz.ScaleType.LINEAR
-                    options = {min_, max_}
+                    options = set(np.arange(min_, max_ + step, step))
                 else:
                     raise ValueError(f"Expression unknown: {expression}")
             else:
-                scale_type = vz.ScaleType.LINEAR
-                options = {min_, max_}
-            _add_number_param(root, options, param["-property"], scale_type=scale_type)
+                options = set(np.arange(min_, max_ + step, step))
+            _add_number_param(root, options, param["-property"])
     return search_space, parameter_convertors
 
 
@@ -195,19 +265,28 @@ def _exp_func(base):
     return lambda v: base**v
 
 
-def _add_number_param(root, options, param_name, scale_type=None):
-    if scale_type is None:
-        scale_type = _determine_scale_type(options)
-    # TODO: should we use root.add_discrete_param instead? Because we know the possible values?
-    kwargs = {
-        "name": param_name,
-        "min_value": min(options),
-        "max_value": max(options),
-        "scale_type": scale_type,
-    }
-    int_type = all(isinstance(v, int) or v.is_integer() for v in options)
-    add_param = root.add_int_param if int_type else root.add_float_param
-    add_param(**kwargs)
+def _add_number_param(root, options, param_name):
+    """
+    Give the possible values:
+    1) use heuristics to check if this should be int/float or discrete
+    2) if discrete, try to find the best scale_type, and add_discrete_param
+    3) if not discrete, add_int_param or add_float_param
+    """
+    scale_type = _heuristically_determine_scale_type(options)
+    is_discrete_param = scale_type is None
+    if is_discrete_param:
+        scale_type = _fit_scale_type(options)
+        root.add_discrete_param(name=param_name, feasible_values=options, scale_type=scale_type)
+    else:
+        kwargs = {
+            "name": param_name,
+            "min_value": min(options),
+            "max_value": max(options),
+            "scale_type": scale_type,
+        }
+        int_type = all(isinstance(v, int) or v.is_integer() for v in options)
+        add_param = root.add_int_param if int_type else root.add_float_param
+        add_param(**kwargs)
 
 
 def _try_convert_string_to_float(string: str):
